@@ -1,0 +1,70 @@
+# gitleaks — détection de secrets avant commit
+# Usage : gitleaks detect --source . --config .gitleaks.toml
+#         gitleaks protect --staged --config .gitleaks.toml
+title = "homelab-security-stack"
+
+[extend]
+# Reprend les règles par défaut (AWS, GCP, clés privées, JWT, etc.)
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Règles spécifiques à cette stack
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "cloudflare-tunnel-token"
+description = "Token de tunnel Cloudflare (permet de créer un connecteur)"
+regex = '''(?i)(TUNNEL_TOKEN|CF_TUNNEL_TOKEN|CLOUDFLARED_TOKEN)\s*[:=]\s*["']?[A-Za-z0-9+/=_-]{30,}'''
+tags = ["cloudflare", "secret"]
+
+[[rules]]
+id = "cloudflare-api-token"
+description = "Token API Cloudflare"
+regex = '''(?i)(CF_API_TOKEN|CLOUDFLARE_API_TOKEN)\s*[:=]\s*["']?[A-Za-z0-9_-]{30,}'''
+tags = ["cloudflare", "secret"]
+
+[[rules]]
+id = "bunkerweb-api-token"
+description = "Token API BunkerWeb"
+regex = '''(?i)(BW_API_TOKEN|BUNKERWEB_API_TOKEN)\s*[:=]\s*["']?[A-Za-z0-9._-]{20,}'''
+tags = ["bunkerweb", "secret"]
+
+[[rules]]
+id = "sops-age-identity"
+description = "Clé privée age (identité SOPS)"
+regex = '''AGE-SECRET-KEY-1[0-9A-Z]{20,}'''
+tags = ["sops", "secret"]
+
+[[rules]]
+id = "private-key-block"
+description = "Bloc de clé privée PEM"
+regex = '''-----BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----'''
+tags = ["pki", "secret"]
+
+[[rules]]
+id = "pki-passphrase"
+description = "Passphrase de clé PKI"
+regex = '''(?i)(PKI_PASSPHRASE|CA_PASSPHRASE|KEY_PASSPHRASE)\s*[:=]\s*["']?[^"'\s]{8,}'''
+tags = ["pki", "secret"]
+
+# ---------------------------------------------------------------------------
+# Allowlist : placeholders de documentation et fichiers d'exemple
+# ---------------------------------------------------------------------------
+
+[allowlist]
+description = "Placeholders assumés, exemples et documentation"
+paths = [
+  '''(^|/)examples/.*''',
+  '''(^|/)scripts/.*\.example$''',
+  '''.*\.example$''',
+  '''(^|/)LICENSE$''',
+]
+regexes = [
+  '''\$\{[A-Z0-9_]+\}''',
+  '''<[A-Za-z0-9_ .-]+>''',
+  '''(?i)change[-_]?me''',
+  '''(?i)example\.(com|net|org)''',
+  '''(?i)placeholder''',
+  '''(?i)xxxxxxxx''',
+  '''/etc/caddy/pki/(root|intermediate|caddy)\.(key|crt)''',
+]

@@ -1,0 +1,59 @@
+%% 01 — Avant la refonte
+%% Rendu : https://mermaid.live ou n'importe quel viewer Mermaid
+flowchart TB
+  NET["Internet"]
+  CF["Cloudflare<br/>TLS public · 7 tunnels"]
+
+  subgraph CONN["Connecteurs cloudflared — 6 hôtes, 3 en panne"]
+    direction LR
+    C131["CT131<br/>wildcard · entreprises · console"]
+    C132["CT132<br/>cogtopia · honeypot"]
+    C137["CT137<br/>bluemap · crafty"]
+    C116["CT116<br/>tunnel inconnu · pas de route IPv4"]
+    C111["CT111<br/>503"]
+    C133["CT133<br/>503"]
+  end
+
+  subgraph FLAT["Réseau plat — FORWARD policy ACCEPT, 1 zone filtrée sur 6"]
+    direction TB
+    N147["CT147 nginx<br/>44 vhosts clients"]
+    N126["CT126 ticketing"]
+    N150["CT150 checkmk"]
+    N144["CT144 drawio"]
+    N141["CT141 CTF"]
+    N137["CT137 Minecraft"]
+    HOST["Hôte Proxmox<br/>SSH 22 · PVE 8006 · SPICE 3128"]
+  end
+
+  NET --> CF
+  CF -->|"7 tunnels"| C131
+  CF --> C132
+  CF --> C137
+  CF --> C116
+  CF --> C111
+  CF --> C133
+
+  C131 -->|"HTTP clair"| N147
+  C131 -->|"HTTP clair"| N150
+  C131 -->|"HTTP clair"| N144
+  C132 -->|"HTTP clair"| N147
+  C137 -->|"HTTP clair"| N137
+  C116 -.->|"mort"| N141
+
+  N147 -->|"tout port"| HOST
+  N126 -->|"tout port"| HOST
+  N141 -->|"tout port"| HOST
+  N137 -->|"tout port"| HOST
+
+  N147 -->|"SSRF /node/&lt;port&gt;"| N147
+  N147 -->|"proxy 8191 · 55432 · 56379"| HOST
+
+  NOTE["Constats<br/>pas de WAF · origines HTTP<br/>5+ admins sans SSO · IP .66 en double"]
+  CF -.-> NOTE
+
+  classDef danger fill:#ffe8e8,stroke:#b00020,color:#7a0016
+  classDef warn fill:#fff4e5,stroke:#c46a00,color:#7a4200
+  classDef note fill:#f4f4f4,stroke:#666,color:#222
+  class C111,C133,HOST,NOTE danger
+  class C116,N147 warn
+  class NET,CF,N126,N150,N144,N141,N137,C131,C132,C137 note

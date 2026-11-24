@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# refonte-firewall.sh — exemple à adapter.
+#
+# Construit deux chaînes idempotentes en tête de FORWARD et INPUT :
+#   REFONTE     : allowlist edge (connecteurs -> WAF -> Caddy -> backends)
+#   REFONTE-IN  : protection des ports d'administration de l'hôte
+#
+# Les chaînes se terminent par RETURN : les règles historiques continuent
+# de s'appliquer. C'est volontaire, pour ne pas tout réécrire d'un coup.
+#
+# Usage : sudo ./refonte-firewall.sh [--strict]
+# Prérequis : iptables, root. Tester dans un lab avant la prod.
+set -euo pipefail
+
+[ "$(id -u)" -eq 0 ] || { echo "root requis" >&2; exit 1; }
+command -v iptables >/dev/null || { echo "iptables absent" >&2; exit 1; }
+
+STRICT=0
+[ "${1:-}" = "--strict" ] && STRICT=1
+
+# ---------------------------------------------------------------------------
+# Paramètres — adapter ces valeurs avant exécution
+# ---------------------------------------------------------------------------
+LAN_CIDR="${LAN_CIDR:-192.168.1.0/24}"
+WG_CIDR="${WG_CIDR:-10.8.0.0/24}"
+TS_CIDR="${TS_CIDR:-100.64.0.0/10}"
+ADMIN_CT_IP="${ADMIN_CT_IP:-22.22.22.20}"
+DMZ_IF="${DMZ_IF:-vmbr4}"
+EDGE_IF="${EDGE_IF:-vmbr5}"
+WAF_INGRESS_IP="${WAF_INGRESS_IP:-10.30.30.155}"
+WAF_EGRESS_IP="${WAF_EGRESS_IP:-10.20.30.155}"
+CADDY_IP="${CADDY_IP:-10.20.30.156}"
+
+# Connecteurs autorisés à parler au WAF (IP réelles, pas des sous-réseaux).
+CONNECTORS=(${CONNECTORS:-22.22.22.20 10.20.30.40})
+
+# Backends dans la DMZ : "IP:port".
+DMZ_BACKENDS=(
+  "10.20.30.147:80"    # nginx mutualisé
+  "10.20.30.140:80"    # vitrine
+  "10.20.30.129:80"    # portfolio
+  "10.20.30.10:80"     # dev
+  "10.20.30.126:3000"  # ticketing
+)
+
+# Backends hors DMZ : chaque ligne est une exception assumée.
+SERVICE_BACKENDS=(
+  "22.22.22.142:8080"  # cours
+  "22.22.22.144:8080"  # drawio
+  "22.22.22.150:80"    # checkmk
+  "22.22.22.108:3001"  # freellm
+  "22.22.22.20:8900"   # app agent
+  "10.10.10.5:8970"    # watch
+  "22.22.22.145:8798"  # automaton
+)
+
+# Backends CTF (plusieurs ports).
+CTF_BACKENDS=(
+  "10.66.66.2:8081"
+  "10.66.66.2:3001"
+  "10.66.66.2:3002"
+  "10.66.66.2:3003"
+  "10.66.66.2:3004"
+  "10.66.66.2:9000"
+)
+
+ipt() { iptables -w "$@"; }
+
+# ---------------------------------------------------------------------------
+# REFONTE — FORWARD
+# ---------------------------------------------------------------------------
+ipt -N REFONTE 2>/dev/null || true
+ipt -F REFONTE
+
+# 1. Ne jamais casser les réponses des flux déjà autorisés.
+ipt -A REFONTE -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# 2. DNS et NTP pour l'edge.
+for ip in "$WAF_EGRESS_IP" "$CADDY_IP"; do
+  ipt -A REFONTE -s "$ip" -p udp --dport 53 -j ACCEPT
+  ipt -A REFONTE -s "$ip" -p tcp --dport 53 -j ACCEPT
+  ipt -A REFONTE -s "$ip" -p udp --dport 123 -j ACCEPT
+done
+
+# 3. Connecteurs -> WAF (entrée sur le bridge de transit).
+for src in "${CONNECTORS[@]}"; do
+  ipt -A REFONTE -s "$src" -d "$WAF_INGRESS_IP" -p tcp --dport 8080 -j ACCEPT
+done
+
+# 4. WAF -> Caddy (le WAF sort par son IP DMZ).
+ipt -A REFONTE -s "$WAF_EGRESS_IP" -d "$CADDY_IP" -p tcp --dport 443 -j ACCEPT
+
+# 5. Caddy -> backends DMZ.
+for pair in "${DMZ_BACKENDS[@]}"; do
+  dst="${pair%:*}"; port="${pair##*:}"
+  ipt -A REFONTE -s "$CADDY_IP" -d "$dst" -p tcp --dport "$port" -j ACCEPT
+done
+
+# 6. Caddy -> backends hors DMZ (exceptions nominatives).
+for pair in "${SERVICE_BACKENDS[@]}"; do
+  dst="${pair%:*}"; port="${pair##*:}"
+  ipt -A REFONTE -s "$CADDY_IP" -d "$dst" -p tcp --dport "$port" -j ACCEPT
+done
+
+for pair in "${CTF_BACKENDS[@]}"; do
+  dst="${pair%:*}"; port="${pair##*:}"
+  ipt -A REFONTE -s "$CADDY_IP" -d "$dst" -p tcp --dport "$port" -j ACCEPT
+done
+
+# 7. Fermetures : tout ce qui n'est pas nommé au-dessus.
+ipt -A REFONTE -d "$CADDY_IP" -p tcp --dport 443 -j DROP
+ipt -A REFONTE -d "$WAF_INGRESS_IP" -p tcp --dport 8080 -j DROP
+# Isolation intra-DMZ : bloque le rebond entre conteneurs DMZ.
+# Les ACCEPT de l'étape 5 passent avant, donc Caddy -> backends fonctionne.
+ipt -A REFONTE -i "$DMZ_IF" -o "$DMZ_IF" -j DROP
+
+# 8. Mode strict : fermer l'edge et les connecteurs hors allowlist.
+if [ "$STRICT" = "1" ]; then
+  for src in "${CONNECTORS[@]}"; do
+    ipt -A REFONTE -s "$src" -p udp --dport 53 -j ACCEPT
+    ipt -A REFONTE -s "$src" -p tcp --dport 443 -j ACCEPT
+    ipt -A REFONTE -s "$src" -p udp --dport 7844 -j ACCEPT
+  done
+  ipt -A REFONTE -s "$CADDY_IP" -j DROP
+  ipt -A REFONTE -s "$WAF_EGRESS_IP" -j DROP
+  ipt -A REFONTE -i "$EDGE_IF" -j DROP
+  for src in "${CONNECTORS[@]}"; do
+    ipt -A REFONTE -s "$src" -j DROP
+  done
+fi
+
+# 9. Rendre la main aux règles historiques.
+ipt -A REFONTE -j RETURN
+
+ipt -D FORWARD -j REFONTE 2>/dev/null || true
+ipt -I FORWARD 1 -j REFONTE
+
+# ---------------------------------------------------------------------------
+# REFONTE-IN — INPUT (ports d'administration de l'hôte)
+# ---------------------------------------------------------------------------
+ipt -N REFONTE-IN 2>/dev/null || true
+ipt -F REFONTE-IN
+
+ipt -A REFONTE-IN -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+ipt -A REFONTE-IN -i lo -j ACCEPT
+
+# Administration : LAN, VPN, Tailscale, et le CT qui en a besoin.
+for src in "$LAN_CIDR" "$WG_CIDR" "$TS_CIDR" "$ADMIN_CT_IP"; do
+  ipt -A REFONTE-IN -s "$src" -p tcp -m multiport --dports 22,8006,3128 -j ACCEPT
+  ipt -A REFONTE-IN -s "$src" -p tcp -m multiport --dports 6556,9100 -j ACCEPT
+done
+
+# Supervision.
+ipt -A REFONTE-IN -s 22.22.22.150 -p tcp -m multiport --dports 6556,9100 -j ACCEPT
+
+# Services internes de l'hôte consommés par le web.
+ipt -A REFONTE-IN -s 10.20.30.147 -p tcp -m multiport --dports 8811,9099 -j ACCEPT
+ipt -A REFONTE-IN -s 10.20.30.40  -p tcp --dport 9099 -j ACCEPT
+
+# Deny des ports admin depuis les autres bridges.
+for iface in vmbr1 vmbr2 vmbr3 "$EDGE_IF"; do
+  ipt -A REFONTE-IN -i "$iface" -p tcp \
+    -m multiport --dports 22,8006,3128,6556,9100,8811,9099 -j DROP
+done
+
+ipt -A REFONTE-IN -j RETURN
+
+ipt -D INPUT -j REFONTE-IN 2>/dev/null || true
+ipt -I INPUT 1 -j REFONTE-IN
+
+# ---------------------------------------------------------------------------
+# Résumé
+# ---------------------------------------------------------------------------
+echo "REFONTE chargée (strict=${STRICT})"
+iptables -L REFONTE -n --line-numbers | sed -n '1,12p'
+echo "..."
+iptables -L REFONTE-IN -n --line-numbers | sed -n '1,20p'

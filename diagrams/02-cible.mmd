@@ -1,0 +1,75 @@
+%% 02 — Architecture cible
+flowchart TB
+  U["Internet<br/>visiteurs · scanners · attaquants"]
+
+  subgraph CFZ["Cloudflare"]
+    CF["TLS public<br/>WAF managé<br/>Access"]
+  end
+
+  subgraph EDGE["Edge — hôte Proxmox"]
+    direction TB
+    subgraph V5["vmbr5 · 10.30.30.0/24"]
+      W5["BunkerWeb<br/>10.30.30.155:8080"]
+    end
+    subgraph V4["vmbr4 · 10.20.30.0/24"]
+      W4["BunkerWeb<br/>10.20.30.155"]
+      CAD["Caddy<br/>10.20.30.156:443<br/>PKI interne"]
+    end
+    W5 --- W4
+    W4 --> CAD
+  end
+
+  subgraph CONN["Connecteurs"]
+    C131["CT131 cloudflared<br/>22.22.22.20"]
+    C132["CT132 cloudflared<br/>10.20.30.40"]
+  end
+
+  subgraph DMZ["DMZ backends"]
+    N147["CT147 nginx<br/>44 vhosts"]
+    N126["CT126 ticketing<br/>:3000"]
+    N140["CT140 vitrine<br/>:80"]
+    N129["CT129 portfolio<br/>:80"]
+    N101["CT101 dev<br/>:80"]
+  end
+
+  subgraph SVC["Services hors DMZ"]
+    N142["CT142 cours<br/>:8080"]
+    N144["CT144 drawio<br/>:8080"]
+    N150["CT150 checkmk<br/>:80"]
+    N141["CT141 CTF<br/>:8081 · :9000"]
+    N108["CT108 freellm<br/>:3001"]
+    N137["CT137 Minecraft<br/>hors WAF"]
+  end
+
+  subgraph ADMIN["Accès admin"]
+    LAN["LAN 192.168.1.0/24"]
+    WG["WireGuard 10.8.0.0/24"]
+    TS["Tailscale 100.64.0.0/10"]
+  end
+
+  U --> CF
+  CF -->|"tunnel sortant"| C131
+  CF -->|"tunnel sortant"| C132
+  C131 -->|"8080"| W5
+  C132 -->|"8080"| W5
+  CAD -->|"80"| N147
+  CAD -->|"3000"| N126
+  CAD -->|"80"| N140
+  CAD -->|"80"| N129
+  CAD -->|"80"| N101
+  CAD -->|"8080"| N142
+  CAD -->|"8080"| N144
+  CAD -->|"80"| N150
+  CAD -->|"8081 · 9000"| N141
+  CAD -->|"3001"| N108
+
+  LAN -->|"22 · 8006 · 3128"| CAD
+  WG -->|"22 · 8006 · 3128"| CAD
+  TS -->|"22 · 8006 · 3128"| CAD
+
+  classDef allow fill:#e6f7ee,stroke:#0a7a44,color:#064d2b
+  classDef deny fill:#ffe8e8,stroke:#b00020,color:#7a0016
+  classDef ext fill:#eef3ff,stroke:#3355aa,color:#1b2f66
+  class W5,W4,CAD,C131,C132,N147,N126,N140,N129,N101,N142,N144,N150,N141,N108 allow
+  class U,CF ext
+  class N137 deny

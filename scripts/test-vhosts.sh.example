@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# test-vhosts.sh — campagne de test HTTP à travers le WAF, puis en live.
+#
+# Ne modifie rien côté serveur. Envoie un GET par hostname.
+#
+# Usage :
+#   HOSTS_FILE=vhosts.txt WAF_URL=http://10.30.30.155:8080 \
+#     ./test-vhosts.sh.example [--internal-only]
+#
+# HOSTS_FILE : un hostname par ligne, les lignes # sont ignorées.
+# Code de sortie : 0 si tous les vhosts répondent, 1 sinon.
+set -uo pipefail
+
+WAF_URL="${WAF_URL:-http://10.30.30.155:8080}"
+HOSTS_FILE="${HOSTS_FILE:-vhosts.txt}"
+TIMEOUT="${TIMEOUT:-12}"
+INTERNAL_ONLY=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --internal-only) INTERNAL_ONLY=1 ;;
+    -h|--help)
+      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "argument inconnu : $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
+[ -r "$HOSTS_FILE" ] || { echo "fichier introuvable : $HOSTS_FILE" >&2; exit 2; }
+command -v curl >/dev/null || { echo "curl requis" >&2; exit 2; }
+
+mapfile -t HOSTS < <(
+  sed -E 's/#.*//; s/^[[:space:]]+//; s/[[:space:]]+$//' "$HOSTS_FILE" \
+    | sed '/^$/d'
+)
+
+if [ "${#HOSTS[@]}" -eq 0 ]; then
+  echo "aucun hostname dans $HOSTS_FILE" >&2
+  exit 2
+fi
+
+printf '%-48s %6s %9s %6s %9s %s\n' \
+  "HOST" "WAF" "WAF_SIZE" "LIVE" "LIVE_SIZE" "STATUT"
+
+fail=0
+warn=0
+
+for h in "${HOSTS[@]}"; do
+  bw_code="000"
+  bw_size="0"
+  if out="$(curl -s -o /dev/null -w '%{http_code} %{size_download}' \
+      --max-time "$TIMEOUT" -H "Host: $h" "$WAF_URL/" 2>/dev/null)"; then
+    read -r bw_code bw_size <<<"$out"
+  fi
+
+  live_code="-"
+  live_size="-"
+  if [ "$INTERNAL_ONLY" -eq 0 ]; then
+    if out="$(curl -s -o /dev/null -w '%{http_code} %{size_download}' \
+        --max-time "$TIMEOUT" "https://$h/" 2>/dev/null)"; then
+      read -r live_code live_size <<<"$out"
+    else
+      live_code="000"
+      live_size="0"
+    fi
+  fi
+
+  statut="OK"
+  if [ "$bw_code" = "000" ]; then
+    statut="FAIL"
+    fail=$((fail + 1))
+  elif [ "$bw_code" = "502" ] || [ "$bw_code" = "503" ]; then
+    statut="ORIGIN_DOWN"
+    warn=$((warn + 1))
+  elif [ "$INTERNAL_ONLY" -eq 0 ] && [ "$live_code" = "000" ]; then
+    statut="LIVE_FAIL"
+    fail=$((fail + 1))
+  elif [ "$INTERNAL_ONLY" -eq 0 ] && [ "$bw_code" != "$live_code" ]; then
+    statut="DIFF"
+    warn=$((warn + 1))
+  fi
+
+  printf '%-48s %6s %9s %6s %9s %s\n' \
+    "$h" "$bw_code" "$bw_size" "$live_code" "$live_size" "$statut"
+done
+
+echo
+echo "Vhosts : ${#HOSTS[@]}"
+echo "Échecs : $fail"
+echo "Alertes: $warn"
+echo
+echo "Rappel : un 200 prouve que le vhost répond, pas que l'application fonctionne."
+
+[ "$fail" -eq 0 ]

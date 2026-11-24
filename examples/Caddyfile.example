@@ -1,0 +1,97 @@
+# Caddyfile — exemple à adapter.
+# Rôle : terminer le TLS interne (PKI maison) et router par Host vers les
+# backends. BunkerWeb est le seul client autorisé à joindre ce listener.
+#
+# Vérifier : caddy validate --config Caddyfile.example
+# Recharger : systemctl reload caddy
+
+{
+	admin off
+	auto_https off
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 50MiB
+			roll_keep 10
+		}
+		format json
+	}
+}
+
+# Un seul listener, un seul certificat, routage par Host.
+# Le SAN du certificat (caddy.dmz.internal + IP) ne correspond pas aux noms
+# publics : c'est acceptable tant que la vérification amont est désactivée.
+:443 {
+	bind 10.20.30.156
+	tls /etc/caddy/pki/chain.crt /etc/caddy/pki/caddy.key
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# --- Exceptions avant le wildcard ---
+	@support host support.sitecreator.shop
+	handle @support {
+		reverse_proxy 10.20.30.126:3000
+	}
+
+	@portfolio host portfolio.sitecreator.shop
+	handle @portfolio {
+		reverse_proxy 10.20.30.129:80
+	}
+
+	@play host play.sitecreator.shop
+	redir @play https://cogtopia.events{uri} 301
+
+	# --- Sites clients / vitrine ---
+	# Le wildcard Caddy attrape tous les sous-domaines non listés au-dessus.
+	# Attention : le WAF, lui, exige une liste explicite.
+	@sitecreator host sitecreator.shop www.sitecreator.shop *.sitecreator.shop
+	handle @sitecreator {
+		reverse_proxy 10.20.30.147:80
+	}
+
+	@cogtopia host cogtopia.events www.cogtopia.events help.cogtopia.events
+	handle @cogtopia {
+		reverse_proxy 10.20.30.147:80
+	}
+
+	# --- Vitrines ---
+	@lab host lab.example.com www.lab.example.com
+	handle @lab {
+		reverse_proxy 10.20.30.140:80
+	}
+
+	# --- Applications hors DMZ (nécessitent une règle firewall nominative) ---
+	@cours host cours.lab.example.com
+	handle @cours {
+		reverse_proxy 22.22.22.142:8080
+	}
+
+	# --- Outils admin : Cloudflare Access devant ---
+	@checkmk host checkmk.example.com
+	handle @checkmk {
+		reverse_proxy 22.22.22.150:80
+	}
+
+	@diagrams host diagrams.example.com
+	handle @diagrams {
+		reverse_proxy 22.22.22.144:8080
+	}
+
+	# --- Défaut ---
+	# Ne jamais laisser Caddy proxifier une destination arbitraire.
+	respond 404
+}
+
+# Health check interne (Caddy lui-même, supervision).
+http://10.20.30.156:80 {
+	bind 10.20.30.156
+	respond /health "ok" 200
+	respond 404
+}

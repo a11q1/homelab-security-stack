@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# audit-vhosts.sh — inventaire lecture seule des vhosts nginx.
+#
+# Ne modifie rien. Extrait les server_name, résout le DNS et teste le HTTPS.
+# Utile avant une refonte : savoir ce qui existe, ce qui répond et ce qui est
+# déjà mort.
+#
+# Usage :
+#   ./audit-vhosts.sh.example [--no-http] [/etc/nginx] [sortie.tsv]
+#
+# Sortie : TSV hostname, IP(s), code HTTP, taille, statut.
+set -euo pipefail
+
+NO_HTTP=0
+POSITIONAL=()
+for arg in "$@"; do
+  case "$arg" in
+    --no-http) NO_HTTP=1 ;;
+    -h|--help)
+      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *) POSITIONAL+=("$arg") ;;
+  esac
+done
+
+NGINX_DIR="${POSITIONAL[0]:-/etc/nginx}"
+OUT="${POSITIONAL[1]:-vhosts-audit.tsv}"
+
+[ -d "$NGINX_DIR" ] || { echo "répertoire introuvable : $NGINX_DIR" >&2; exit 1; }
+command -v curl >/dev/null || { echo "curl requis" >&2; exit 1; }
+
+mapfile -t HOSTS < <(
+  grep -rhE '^[[:space:]]*server_name[[:space:]]' "$NGINX_DIR" 2>/dev/null \
+    | sed -E 's/#.*//; s/^[[:space:]]*server_name[[:space:]]+//; s/;.*$//' \
+    | tr -s '[:space:]' '\n' \
+    | sed '/^$/d' \
+    | grep -vE '^(_|localhost|127\.0\.0\.1)$' \
+    | sort -u
+)
+
+if [ "${#HOSTS[@]}" -eq 0 ]; then
+  echo "aucun server_name trouvé dans $NGINX_DIR" >&2
+  exit 1
+fi
+
+printf 'hostname\tips\thttp_code\tsize\tstatus\n' > "$OUT"
+
+fail=0
+dead=0
+for h in "${HOSTS[@]}"; do
+  ips="$(getent ahostsv4 "$h" 2>/dev/null | awk '{print $1}' | sort -u | paste -sd, - || true)"
+  code="n/a"
+  size="n/a"
+
+  if [ "$NO_HTTP" -eq 0 ]; then
+    if out="$(curl -s -o /dev/null -w '%{http_code} %{size_download}' \
+        --max-time 8 "https://$h/" 2>/dev/null)"; then
+      read -r code size <<<"$out"
+    else
+      code="000"
+      size="0"
+    fi
+  fi
+
+  status="OK"
+  if [ "$code" = "000" ]; then
+    status="DEAD"
+    dead=$((dead + 1))
+    fail=$((fail + 1))
+  elif [ "$code" = "502" ] || [ "$code" = "503" ]; then
+    status="ORIGIN_DOWN"
+    fail=$((fail + 1))
+  fi
+
+  printf '%s\t%s\t%s\t%s\t%s\n' "$h" "$ips" "$code" "$size" "$status" >> "$OUT"
+done
+
+echo
+echo "Hôtes        : ${#HOSTS[@]}"
+echo "Sans réponse : $dead"
+echo "En échec     : $fail"
+echo "Résultat     : $OUT"
+
+[ "$fail" -eq 0 ]

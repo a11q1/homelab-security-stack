@@ -1,0 +1,55 @@
+{
+  "tunnel": "TUNNEL_ID_PLACEHOLDER",
+  "credentials-file": "/etc/cloudflared/TUNNEL_ID_PLACEHOLDER.json",
+  "no-autoupdate": true,
+  "ingress": [
+    {
+      "hostname": "sitecreator.shop",
+      "service": "http://10.30.30.155:8080",
+      "originRequest": {
+        "httpHostHeader": "sitecreator.shop",
+        "connectTimeout": "10s"
+      }
+    },
+    {
+      "hostname": "www.sitecreator.shop",
+      "service": "http://10.30.30.155:8080",
+      "originRequest": {
+        "httpHostHeader": "www.sitecreator.shop"
+      }
+    },
+    {
+      "hostname": "cogtopia.events",
+      "service": "http://10.30.30.155:8080",
+      "originRequest": {
+        "httpHostHeader": "cogtopia.events"
+      }
+    },
+    {
+      "hostname": "support.sitecreator.shop",
+      "service": "http://10.30.30.155:8080"
+    },
+    {
+      "hostname": "checkmk.example.com",
+      "service": "http://10.30.30.155:8080"
+    },
+    {
+      "hostname": "proxmox.example.com",
+      "service": "https://10.20.30.1:8006",
+      "originRequest": {
+        "noTLSVerify": true,
+        "connectTimeout": "15s"
+      }
+    },
+    {
+      "hostname": "admin.sitecreator.shop",
+      "service": "http://10.20.30.40:80",
+      "originRequest": {
+        "httpHostHeader": "admin.sitecreator.shop"
+      }
+    },
+    {
+      "service": "http_status:404"
+    }
+  ]
+}

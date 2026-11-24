@@ -1,0 +1,30 @@
+%% 04 — PKI interne
+flowchart TB
+  ROOT["Root CA<br/>Refonte Homelab Root CA<br/>EC P-256 · 3650 jours<br/>pathlen 1"]
+  INT["Intermediate CA<br/>Refonte Homelab Intermediate CA<br/>EC P-256 · 1825 jours<br/>pathlen 0"]
+  LEAF["Leaf Caddy<br/>caddy.dmz.internal<br/>825 jours<br/>SAN DNS + IP 10.20.30.156"]
+
+  subgraph TRUST["Trust stores"]
+    BW["BunkerWeb<br/>/etc/ssl/certs/refonte-root.crt"]
+    ADMIN["Postes admin<br/>import manuel"]
+  end
+
+  subgraph USE["Usage"]
+    CAD["Caddy :443<br/>chain.crt"]
+    WAF["BunkerWeb<br/>vérification phase 2"]
+  end
+
+  ROOT -->|"signe"| INT
+  INT -->|"signe"| LEAF
+  LEAF --> CAD
+  ROOT -.->|"distribuée"| BW
+  ROOT -.->|"distribuée"| ADMIN
+  BW -.->|"vérifie"| CAD
+  WAF -->|"appelle"| CAD
+
+  classDef root fill:#ffe8e8,stroke:#b00020,color:#7a0016
+  classDef inter fill:#fff4e5,stroke:#c46a00,color:#7a4200
+  classDef leaf fill:#e6f7ee,stroke:#0a7a44,color:#064d2b
+  class ROOT root
+  class INT inter
+  class LEAF,CAD,BW,WAF,ADMIN leaf

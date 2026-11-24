@@ -1,0 +1,25 @@
+%% 03 — Chemin d'une requête HTTP
+sequenceDiagram
+  autonumber
+  participant U as Navigateur
+  participant CF as Cloudflare
+  participant T as cloudflared
+  participant W as BunkerWeb
+  participant C as Caddy
+  participant B as Backend
+
+  U->>CF: GET sitecreator.shop
+  CF->>CF: TLS public et WAF managé
+  CF->>T: requête dans le tunnel
+  T->>W: HTTP 8080 avec Host et CF-Connecting-IP
+  W->>W: CRS, rate limit, logs
+  Note over W: Si Access est requis, la requête<br/>a déjà été authentifiée par Cloudflare
+  W->>C: HTTPS 443 PKI interne
+  C->>C: routage par Host
+  C->>B: HTTP 80
+  B-->>C: 200
+  C-->>W: 200 et en-têtes de sécurité
+  W-->>T: 200
+  T-->>CF: 200
+  CF-->>U: 200
+  Note over W,C: TLS chiffré<br/>vérification désactivée en phase 1

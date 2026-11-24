@@ -1,0 +1,47 @@
+# Secrets et matériel cryptographique
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.csr
+*.srl
+*.kdbx
+.env
+.env.*
+!.env.example
+*.env
+!*.env.example
+secrets/
+sops-age/
+age.key
+*.agekey
+
+# Sorties de diagnostic pouvant contenir des identifiants
+*.log
+*.bak
+*.bak-*
+*.orig
+*.swp
+*~
+tunnels/
+cloudflared/*.json
+dns-*.json
+*credentials*.json
+
+# Divers
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+tmp/
+out/
+*.tmp
+*.tsv

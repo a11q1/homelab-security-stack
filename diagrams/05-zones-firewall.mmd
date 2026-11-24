@@ -1,0 +1,63 @@
+%% 05 — Zones et décisions firewall
+flowchart LR
+  subgraph LANZ["vmbr0 · LAN 192.168.1.0/24"]
+    ADMIN["Postes admin"]
+    BOX["Box 192.168.1.254"]
+  end
+
+  subgraph HOSTZ["Hôte Proxmox"]
+    HOST["REFONTE-IN<br/>22 · 8006 · 3128<br/>6556 · 9100"]
+  end
+
+  subgraph INTZ["vmbr1 · 10.10.10.0/24"]
+    INT["Jeux · IA · apps"]
+  end
+
+  subgraph PRODZ["vmbr2 · 22.22.22.0/24"]
+    PROD["Apps · monitoring<br/>CTF tools"]
+  end
+
+  subgraph CTFZ["vmbr3 · 10.66.66.0/24"]
+    CTF["CTF · hackathon"]
+  end
+
+  subgraph EDGEZ["vmbr5 · 10.30.30.0/24"]
+    CONN["Connecteurs<br/>CT131 · CT132"]
+    WAF["BunkerWeb<br/>10.30.30.155:8080"]
+  end
+
+  subgraph DMZZ["vmbr4 · 10.20.30.0/24"]
+    CAD["Caddy<br/>10.20.30.156:443"]
+    BACK["Backends DMZ<br/>CT147 · CT126 · CT140…"]
+  end
+
+  subgraph REMOTE["Accès distant"]
+    WG["WireGuard 10.8.0.0/24"]
+    TS["Tailscale 100.64.0.0/10"]
+  end
+
+  ADMIN -->|"ALLOW 22 · 8006"| HOST
+  WG -->|"ALLOW 22 · 8006"| HOST
+  TS -->|"ALLOW 22 · 8006"| HOST
+  INT -.->|"DENY admin"| HOST
+  PROD -.->|"DENY admin"| HOST
+  CTF -.->|"DENY admin"| HOST
+
+  CONN -->|"ALLOW 8080"| WAF
+  WAF -->|"ALLOW 443"| CAD
+  CAD -->|"ALLOW ports nominatifs"| BACK
+  CAD -->|"ALLOW 8080 · 9000"| PROD
+
+  BACK -.->|"DENY vers LAN"| ADMIN
+  BACK -.->|"DENY vers INT"| INT
+  BACK -.->|"DENY intra non listé"| BACK
+
+  INT <-.->|"HÉRITÉ ouvert"| PROD
+  PROD <-.->|"HÉRITÉ ouvert"| CTF
+
+  classDef allow fill:#e6f7ee,stroke:#0a7a44,color:#064d2b
+  classDef deny fill:#ffe8e8,stroke:#b00020,color:#7a0016
+  classDef flat fill:#fff8e1,stroke:#b58900,color:#6b5200
+  classDef neutral fill:#f4f4f4,stroke:#666,color:#222
+  class ADMIN,BOX,HOST,CONN,WAF,CAD,BACK,WG,TS allow
+  class INT,PROD,CTF flat

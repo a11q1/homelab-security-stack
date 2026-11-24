@@ -1,0 +1,114 @@
+# Exemple à adapter — ne pas déployer tel quel.
+# BunkerWeb 1.6.x : WAF reverse proxy pour plusieurs vhosts.
+#
+# Prérequis :
+#   - un réseau Docker 172.30.0.0/24 dédié (ne pas réutiliser un réseau applicatif)
+#   - les secrets BW_API_TOKEN et BW_DB_PASSWORD dans un fichier .env local (600)
+#   - ./pki/root.crt : la root CA interne, en lecture seule
+#
+# Démarrage : docker compose --env-file .env -f docker-compose.bunkerweb.yml up -d
+name: edge-waf
+
+x-bw-env: &bw-env
+  # L'API de contrôle n'écoute que dans les réseaux Docker internes.
+  API_WHITELIST_IP: "127.0.0.0/8 172.30.0.0/24"
+  API_TOKEN: "${BW_API_TOKEN:?definir BW_API_TOKEN}"
+  DATABASE_URI: "mariadb+pymysql://bunkerweb:${BW_DB_PASSWORD:?definir BW_DB_PASSWORD}@bw-db:3306/db"
+
+services:
+  bunkerweb:
+    image: bunkerity/bunkerweb:1.6.18
+    ports:
+      # Une seule interface, jamais 0.0.0.0 : le WAF ne doit être joignable
+      # que depuis le bridge de transit (vmbr5 dans le lab).
+      - "${BW_BIND_IP:-10.30.30.155}:8080:8080/tcp"
+    environment:
+      <<: *bw-env
+    extra_hosts:
+      # Permet de vérifier le certificat par son nom plutôt que par son IP.
+      - "caddy.dmz.internal:10.20.30.156"
+    volumes:
+      - ./pki/root.crt:/etc/ssl/certs/refonte-root.crt:ro
+    restart: unless-stopped
+    networks:
+      - bw-universe
+      - bw-services
+
+  bw-scheduler:
+    image: bunkerity/bunkerweb-scheduler:1.6.18
+    environment:
+      <<: *bw-env
+      BUNKERWEB_INSTANCES: "bunkerweb"
+      UI_HOST: "http://bw-ui:7000"
+      USE_REDIS: "yes"
+      REDIS_HOST: "redis"
+    env_file:
+      # Compose >= 2.24. Sinon : env_file: [./bw.env]
+      - path: ./bw.env
+        format: raw
+    extra_hosts:
+      - "caddy.dmz.internal:10.20.30.156"
+    volumes:
+      - bw-storage:/data
+      - ./pki/root.crt:/etc/ssl/certs/refonte-root.crt:ro
+    restart: unless-stopped
+    networks:
+      - bw-universe
+      - bw-db
+
+  bw-ui:
+    image: bunkerity/bunkerweb-ui:1.6.18
+    environment:
+      <<: *bw-env
+    volumes:
+      - bw-ui-data:/data
+    restart: unless-stopped
+    networks:
+      - bw-universe
+      - bw-db
+
+  bw-db:
+    image: mariadb:11
+    command: --max-allowed-packet=67108864
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      MYSQL_DATABASE: "db"
+      MYSQL_USER: "bunkerweb"
+      MYSQL_PASSWORD: "${BW_DB_PASSWORD:?definir BW_DB_PASSWORD}"
+    volumes:
+      - bw-data:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - bw-db
+
+  redis:
+    image: redis:8-alpine
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy volatile-lru
+      --save 60 1000
+      --appendonly yes
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - bw-universe
+
+volumes:
+  bw-data:
+  bw-storage:
+  redis-data:
+  bw-ui-data:
+
+networks:
+  bw-universe:
+    name: bw-universe
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.0.0/24
+  bw-services:
+    name: bw-services
+  bw-db:
+    name: bw-db

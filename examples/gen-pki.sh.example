@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# gen-pki.sh — exemple à adapter.
+#
+# PKI interne à deux niveaux pour un reverse proxy :
+#   root (10 ans) -> intermediate (5 ans) -> leaf Caddy (825 jours)
+#
+# Idempotent : chaque bloc ne s'exécute que si le fichier n'existe pas.
+# Les clés privées restent sur la machine : ne jamais les copier dans git.
+#
+# Usage : sudo ./gen-pki.sh.example [/etc/caddy/pki]
+set -euo pipefail
+
+PKI="${1:-/etc/caddy/pki}"
+mkdir -p "$PKI"
+cd "$PKI"
+umask 077
+
+# ---------------------------------------------------------------------------
+# 1. Root CA
+# ---------------------------------------------------------------------------
+if [ ! -f root.key ]; then
+  openssl ecparam -name prime256v1 -genkey -noout -out root.key
+  openssl req -x509 -new -key root.key -sha256 -days 3650 -out root.crt \
+    -subj "/CN=Refonte Homelab Root CA/O=Example Lab/OU=Infra" \
+    -addext "basicConstraints=critical,CA:TRUE,pathlen:1" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -addext "subjectKeyIdentifier=hash"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Intermediate CA
+# ---------------------------------------------------------------------------
+if [ ! -f intermediate.key ]; then
+  openssl ecparam -name prime256v1 -genkey -noout -out intermediate.key
+  openssl req -new -key intermediate.key -out intermediate.csr \
+    -subj "/CN=Refonte Homelab Intermediate CA/O=Example Lab/OU=Infra"
+  cat > intermediate.ext <<'EXT'
+basicConstraints=critical,CA:TRUE,pathlen:0
+keyUsage=critical,keyCertSign,cRLSign
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid,issuer
+EXT
+  openssl x509 -req -in intermediate.csr -CA root.crt -CAkey root.key \
+    -CAcreateserial -out intermediate.crt -days 1825 -sha256 \
+    -extfile intermediate.ext
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Leaf Caddy
+# ---------------------------------------------------------------------------
+if [ ! -f caddy.key ]; then
+  openssl ecparam -name prime256v1 -genkey -noout -out caddy.key
+  openssl req -new -key caddy.key -out caddy.csr \
+    -subj "/CN=caddy.dmz.internal/O=Example Lab/OU=Edge"
+  cat > caddy.ext <<'EXT'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:caddy.dmz.internal,IP:10.20.30.156
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid,issuer
+EXT
+  openssl x509 -req -in caddy.csr -CA intermediate.crt -CAkey intermediate.key \
+    -CAcreateserial -out caddy.crt -days 825 -sha256 -extfile caddy.ext
+  # TLS sert la feuille puis l'intermédiaire ; la root va dans le trust store.
+  cat caddy.crt intermediate.crt > chain.crt
+fi
+
+chmod 600 ./*.key
+chmod 644 ./*.crt
+rm -f intermediate.csr caddy.csr intermediate.ext caddy.ext
+
+# ---------------------------------------------------------------------------
+# 4. Vérification
+# ---------------------------------------------------------------------------
+openssl verify -CAfile root.crt -untrusted intermediate.crt caddy.crt
+echo "PKI prête dans $PKI"
+openssl x509 -in caddy.crt -noout -subject -issuer -dates -ext subjectAltName
+
+# Rappel : la clé root doit être sortie de la machine et conservée hors ligne.
+# Tant qu'elle est sur le serveur, la PKI n'est pas une PKI hors ligne.
