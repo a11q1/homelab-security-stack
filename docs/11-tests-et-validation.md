@@ -187,12 +187,31 @@ que le paquet ne sort pas, pas que la règle est la bonne. Les compteurs
 | `freellm` | 302 | 302 | **OK** |
 | `admin.sitecreator.shop` | 200 (piège) | 200 | **OK** |
 | `openssl verify` | OK | OK | **OK** |
+| 15 vhosts critiques (final) | 200/302/307/401 | conforme | **OK** |
+| CT140 → CT147:22 | bloqué | bloqué | **OK** |
+| CT131 → CT147:22 | ouvert | ouvert | **OK** |
+| CT140 → hôte `:8006` / `:22` | bloqué | bloqué | **OK** |
+| CT150 → hôte `:6556` | ouvert | ouvert | **OK** |
+| CT131 → hôte `:8006` / `:22` | ouvert | ouvert | **OK** |
 | DMZ → LAN | timeout | non rejoué | **à faire** |
-| Hôte `:8006` depuis vmbr2 | fermé | non rejoué | **à faire** |
 | WAF → Caddy authentifié | vérifié | `verify=no` | **non** |
 
-Les trois dernières lignes sont volontairement dans le tableau. Un rapport de
+Les deux dernières lignes sont volontairement dans le tableau. Un rapport de
 test sans ligne rouge est un rapport incomplet.
+
+### Tests finaux (19:11 UTC)
+
+Après la persistance et le chiffrement, une seconde passe courte :
+
+```text
+15 vhosts critiques          → 200 / 302 / 307 / 401 attendus
+XSS / SQLi                   → 403
+page normale                 → 200
+headers de debug résiduels   → aucun
+marqueurs de test            → aucun
+SSH inter-CT                 → CT140 bloqué, CT131 ouvert
+hôte                         → CT140 bloqué, CT150:6556 ouvert, CT131 ouvert
+```
 
 ## Procédure de rollback
 
@@ -211,7 +230,7 @@ test sans ligne rouge est un rapport incomplet.
 2. DNS             → ne pas toucher si le tunnel suffit
 3. WAF             → docker compose stop (le trafic ne passe plus par lui)
 4. Watchdog        → restaurer la version .bak-20261124-refonte
-5. Firewall        → retirer REFONTE / REFONTE-IN
+5. Firewall        → désactiver le service, retirer REFONTE / REFONTE-IN
 6. Vérifier        → campagne vhosts + accès admin
 ```
 
@@ -229,7 +248,8 @@ cp /root/agency_tools/tunnel_watchdog.py.bak-20261124-refonte \
    /root/agency_tools/tunnel_watchdog.py
 systemctl restart tunnel-watchdog.timer   # ou le cron
 
-# 5. Firewall : retirer les chaînes, les règles historiques restent
+# 5. Firewall : désactiver la persistance, puis retirer les chaînes
+systemctl disable --now refonte-firewall.service
 iptables -D FORWARD -j REFONTE 2>/dev/null || true
 iptables -F REFONTE && iptables -X REFONTE
 iptables -D INPUT -j REFONTE-IN 2>/dev/null || true
@@ -252,6 +272,8 @@ un rollback prouvé.
 | `iptables-save` avant | `/root/backup/iptables-20261124.txt` |
 | `Caddyfile` avant | backup daté |
 | `bw.env` avant | backup daté, `600` |
+| Secrets edge | `refonte-secrets.enc.yaml` (SOPS) |
+| PKI | `pki.tgz.age` (archive chiffrée) |
 | Watchdog avant | `.bak-20261124-refonte` |
 | Ancien DNS | export de zone |
 
@@ -287,9 +309,11 @@ Durée :
 - Pas de test de charge, pas de mesure de latence p95.
 - Pas de test d'intrusion complet (pas de scan, pas d'exploitation).
 - Pas de test d'authentification Access (on teste le 302, pas le contournement).
-- Pas de test de restauration de sauvegarde.
-- Pas de test après reboot de l'hôte — alors que la persistance du firewall
-  n'est pas câblée.
+- Pas de test de restauration de sauvegarde (ni `pki.tgz.age`, ni les secrets).
+- Pas de test après reboot réel : le service firewall est activé, mais le
+  redémarrage n'a pas été exercé.
+- La clé age n'est pas encore sauvegardée hors ligne : une perte de CT131
+  rendrait les secrets chiffrés irrécupérables.
 - Les tests sont manuels, pas en CI.
 
 ## Suites

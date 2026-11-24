@@ -259,10 +259,10 @@ mv chain.crt.new chain.crt
 chmod 600 caddy.key && chmod 644 caddy.crt chain.crt
 
 caddy validate --config /etc/caddy/Caddyfile
-systemctl reload caddy
+systemctl restart caddy
 ```
 
-Rollback : remettre les `.bak`, `systemctl reload caddy`. Le certificat précédent
+Rollback : remettre les `.bak`, `systemctl restart caddy`. Le certificat précédent
 reste valide, donc pas de coupure pendant la fenêtre.
 
 ### Intermédiaire (5 ans)

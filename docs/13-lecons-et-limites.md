@@ -51,25 +51,26 @@ timeout silencieux. C'est mieux, à condition de les réparer ou de les retirer.
 
 État au 24 novembre 2026, 20:00.
 
-| # | Point | Impact | Priorité |
-|---|---|---|---|
-| 1 | `automaton` : backend `:8798` non écouté (dashboard sur `:8799`, bind localhost) | 502 | P1 |
-| 2 | `preview-client` : origine `10.20.30.10:80` ne répond pas | 502 derrière Access | P1 |
-| 3 | `grafana` : DNS orphelin, service mort | nom qui traîne | P2 |
-| 4 | `watch` : routé via CT147 → CT137, 401 Basic Auth | vhost à moitié mort | P2 |
-| 5 | Tunnel CT116 (autre compte Cloudflare) inutilisé, token visible dans `ps` | secret exposé localement | **P1** |
-| 6 | Firewall par CT Proxmox non effectif pour le trafic bridgé | fausse ceinture | P2 |
-| 7 | TOTP Proxmox non activé | Access est le seul facteur | **P1** |
-| 8 | `REVERSE_PROXY_SSL_VERIFY=no` | hop chiffré, non authentifié | P2 |
-| 9 | Persistance du firewall au boot non câblée | reboot = retour aux règles historiques | **P1** |
-| 10 | `REAL_IP_FROM` contient des IP non-connecteurs | spoofing possible | P2 |
-| 11 | Latéralisation `vmbr1 ↔ vmbr2 ↔ vmbr3` | mouvement latéral | **P1** |
-| 12 | SOPS/age non déployé | secrets en clair sur disque | P2 |
-| 13 | Rotation du token de tunnel non faite | dette de sécurité | P1 |
-| 14 | Rollback non chronométré | procédure non prouvée | P2 |
+| # | Point | Impact | Priorité | Statut |
+|---|---|---|---|---|
+| 1 | `automaton` : backend `:8798` non écouté (dashboard sur `:8799`, bind localhost) | 502 | P1 | ouvert |
+| 2 | `preview-client` : origine `10.20.30.10:80` ne répond pas | 502 derrière Access | P1 | ouvert |
+| 3 | `grafana` : DNS orphelin, service mort | nom qui traîne | P2 | ouvert |
+| 4 | `watch` : routé via CT147 → CT137, 401 Basic Auth | vhost à moitié mort | P2 | ouvert |
+| 5 | Tunnel CT116 (autre compte Cloudflare) | tunnel arrêté, tokens en `--token-file` | — | **corrigé** |
+| 6 | Firewall par CT Proxmox non effectif pour le trafic bridgé | fausse ceinture | P2 | ouvert |
+| 7 | TOTP Proxmox non activé | Access est le seul facteur | **P1** | ouvert |
+| 8 | `REVERSE_PROXY_SSL_VERIFY=no` | hop chiffré, non authentifié | P2 | ouvert |
+| 9 | Persistance du firewall au boot | `refonte-firewall.service --strict` activé | — | **corrigé** |
+| 10 | `REAL_IP_FROM` | resserré à `22.22.22.20 10.20.30.40` | — | **corrigé** |
+| 11 | Latéralisation `vmbr1 ↔ vmbr2 ↔ vmbr3` | mouvement latéral | **P1** | ouvert |
+| 12 | Chiffrement des secrets | edge et PKI sous SOPS/age ; apps à généraliser | P2 | **partiel** |
+| 13 | Rotation des tokens de tunnel exposés | sortis de `ps`, pas invalidés | P1 | **à planifier** |
+| 14 | Rollback non chronométré | procédure non prouvée | P2 | ouvert |
 
-Les points 5, 7, 9, 11 et 13 sont ceux qui me dérangent le plus. Ils sont
-traitables en une journée chacun, mais ils ne l'ont pas été cette nuit.
+Les points 7, 11 et 13 restent les plus gênants. Le 12 est partiel : l'edge et
+la PKI sont chiffrés, pas les `.env` applicatifs. Les points 5, 9 et 10 ont été
+corrigés après la bascule, pas pendant.
 
 ## Ce que je ferais différemment
 
@@ -129,16 +130,16 @@ froid, pas le découvrir à 2 h du matin.
 
 ### 30 jours
 
-1. Rotationner le token du tunnel orphelin et supprimer le tunnel CT116.
+1. Planifier la rotation des tokens cloudflared exposés (point 13).
 2. Activer TOTP sur Proxmox.
-3. Câbler `refonte-firewall.service` au boot et tester un reboot planifié.
+3. Tester un reboot planifié : le service est activé, pas encore prouvé.
 4. Réparer ou retirer `automaton`, `preview-client`, `grafana`, `watch`.
-5. Resserrer `REAL_IP_FROM` aux seuls connecteurs.
+5. Sauvegarder la clé age hors ligne — sans elle, les secrets chiffrés sont perdus avec CT131.
 
 ### 60 jours
 
 6. Activer `REVERSE_PROXY_SSL_VERIFY=yes` après validation de la chaîne.
-7. Déployer SOPS + age pour les secrets edge.
+7. Étendre SOPS + age aux `.env` applicatifs et à la CI (point 12).
 8. Écrire la matrice `vmbr1 ↔ vmbr2 ↔ vmbr3` et la passer en allowlist.
 9. Chronométrer le rollback complet.
 

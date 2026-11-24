@@ -3,7 +3,7 @@
 # backends. BunkerWeb est le seul client autorisé à joindre ce listener.
 #
 # Vérifier : caddy validate --config Caddyfile.example
-# Recharger : systemctl reload caddy
+# Recharger : systemctl restart caddy
 
 {
 	admin off

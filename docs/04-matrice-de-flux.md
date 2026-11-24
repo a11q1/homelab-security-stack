@@ -23,7 +23,7 @@ listée pour ne pas donner l'illusion d'un default deny complet.
 | 2 | Cloudflare | connecteurs CT131 / CT132 | 7844/tcp sortant | ALLOW | cloudflared |
 | 3 | CT131 `22.22.22.20` | WAF `10.30.30.155` | 8080/tcp | ALLOW | `REFONTE` |
 | 4 | CT132 `10.20.30.40` | WAF `10.30.30.155` | 8080/tcp | ALLOW | `REFONTE` |
-| 5 | CT116 `10.10.10.116` / `22.22.22.116` | WAF `10.30.30.155` | 8080/tcp | ALLOW (compat) | `REFONTE` |
+| 5 | CT116 `10.10.10.116` / `22.22.22.116` | WAF `10.30.30.155` | 8080/tcp | ALLOW (compat, connecteur arrêté) | `REFONTE` |
 | 6 | autre source | WAF `10.30.30.155` | 8080/tcp | **DENY** | `REFONTE` (DROP générique) |
 | 7 | navigateur admin | Cloudflare Access | 443/tcp | ALLOW après SSO | Access |
 

@@ -47,7 +47,8 @@ handle @nouveau {
 EOF
 # attention : le bloc doit être AVANT le `respond 404` final
 caddy validate --config /etc/caddy/Caddyfile
-systemctl reload caddy
+# `admin off` : reload impossible, restart obligatoire (bref blip)
+systemctl restart caddy
 
 # 3. Firewall (seulement si hors DMZ)
 # éditer /usr/local/sbin/refonte-firewall.sh, ajouter la ligne AVANT les DROP
@@ -196,7 +197,7 @@ chmod 600 caddy.key && chmod 644 caddy.crt chain.crt
 
 # 7. Recharger
 caddy validate --config /etc/caddy/Caddyfile
-systemctl reload caddy
+systemctl restart caddy
 ```
 
 ### Vérification
@@ -216,7 +217,7 @@ cd /etc/caddy/pki
 mv caddy.crt.bak-$STAMP caddy.crt
 mv caddy.key.bak-$STAMP caddy.key
 mv chain.crt.bak-$STAMP chain.crt
-systemctl reload caddy
+systemctl restart caddy
 ```
 
 ### Pièges
@@ -225,6 +226,17 @@ systemctl reload caddy
   la chaîne.
 - Générer une clé en `644` : `umask 077` avant, toujours.
 - Recharger sans `openssl verify` : l'erreur arrive en production.
+- Oublier de réencrypter la sauvegarde : la prochaine restauration repart avec
+  l'ancien certificat.
+
+### Après la rotation
+
+```bash
+# Réencrypter la sauvegarde PKI avec la nouvelle clé
+tar -C /etc/caddy -czf - pki \
+  | age -r "$AGE_RECIPIENT" -o /root/refonte-2026-11-24/secrets/pki.tgz.age
+chmod 640 /root/refonte-2026-11-24/secrets/pki.tgz.age
+```
 
 ---
 
@@ -302,6 +314,8 @@ cloudflared tunnel ingress validate --config /etc/cloudflared/config.yml
 cloudflared tunnel ingress rules --config /etc/cloudflared/config.yml
 
 # 4. Redémarrer
+systemctl cat cloudflared-xxx | grep -E 'ExecStart|token-file'
+# le token doit venir d'un fichier 600, pas d'un argument en clair
 systemctl restart cloudflared-xxx
 sleep 5
 
@@ -330,6 +344,11 @@ sauvegarde l'état courant avant de restaurer l'ancien.
   le connecteur en boucle.
 - Oublier que le watchdog peut réécrire la config dans les 5 minutes. Le
   désactiver pendant l'opération.
+- Restaurer un ancien JSON qui contient un token en clair : le déplacer dans un
+  fichier `600` et passer l'unité en `--token-file`. Ne jamais remettre un
+  token dans la ligne de commande.
+- Redémarrer CT116 ou CT111 « pour voir » : ils sont arrêtés volontairement,
+  leurs tunnels ne servent plus.
 
 ---
 
@@ -377,50 +396,55 @@ vérifier qu'il n'est pas sensible avant de faire ça.
 ## RB-07 — Redémarrage de l'hôte
 
 **Objectif** : retrouver l'état refonte après un reboot.
-**Durée** : 15 min. **Risque** : élevé si les chaînes ne sont pas persistées.
+**Durée** : 15 min. **Risque** : moyen (le reboot lui-même n'a pas été exercé).
 
 ```bash
-# 1. Les conteneurs edge sont-ils remontés ?
+# 1. Le service firewall a-t-il rejoué la configuration ?
+systemctl status refonte-firewall.service --no-pager
+systemctl is-enabled refonte-firewall.service
+
+# 2. Ordre des chaînes : REFONTE en 1, PVEFW-FORWARD en 2
+iptables -L FORWARD -n --line-numbers | head -4
+
+# 3. Les conteneurs edge sont-ils remontés ?
 pct status 155 && pct status 156
 pct exec 155 -- docker ps
 pct exec 156 -- systemctl status caddy --no-pager
 
-# 2. La chaîne REFONTE existe-t-elle ?
-iptables -L FORWARD -n --line-numbers | head -3
-# si absente : rejouer le script
-/usr/local/sbin/refonte-firewall.sh
-
-# 3. Les routes de CT116 sont-elles là ?
-pct exec 116 -- ip -4 route
-pct exec 116 -- systemctl status refonte-edge-routes.service --no-pager
-
 # 4. Le WAF répond-il ?
 pct exec 155 -- curl -s -o /dev/null -w '%{http_code}\n' http://10.30.30.155:8080/
 
-# 5. Campagne
+# 5. CT116 et CT111 doivent rester arrêtés
+pct status 116
+pct status 111
+# ne pas les démarrer sans décision : leurs tunnels ne sont plus utilisés
+
+# 6. Campagne
 ./test-vhosts.sh
 ```
 
 ### Vérification
 
+- `refonte-firewall.service` est `active (exited)` et `enabled` ;
+- `REFONTE` est en position 1, `PVEFW-FORWARD` en 2 ;
 - 65/65 ;
 - 302 sur les admins ;
 - `iptables -vnL REFONTE` avec des compteurs qui bougent.
 
-### Si le firewall n'est pas persisté
+### La persistance
 
-C'est le cas aujourd'hui. Deux solutions :
+Le service est déployé :
 
 ```ini
 # /etc/systemd/system/refonte-firewall.service
 [Unit]
-Description=Refonte firewall (REFONTE chains)
-After=network-online.target
-Wants=network-online.target
+Description=Refonte 2026-11-24 - firewall edge/DMZ/admin
+After=network-online.target pve-firewall.service
+Wants=network-online.target pve-firewall.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/refonte-firewall.sh
+ExecStart=/root/refonte-firewall.sh --strict
 RemainAfterExit=yes
 
 [Install]
@@ -431,7 +455,15 @@ WantedBy=multi-user.target
 systemctl enable --now refonte-firewall.service
 ```
 
-Tester avec un `reboot` planifié, pas en pleine journée.
+Deux points à surveiller :
+
+- si `iptables -L FORWARD` ne montre pas `REFONTE` en premier, le service a
+  échoué : `journalctl -u refonte-firewall.service -n 50` ;
+- `--strict` est volontaire au boot. Un mode permissif ne doit pas revenir par
+  accident après un redémarrage.
+
+Tester avec un `reboot` planifié, pas en pleine journée. Tant que ce test n'a
+pas été fait, la persistance est **configurée**, pas **prouvée**.
 
 ---
 
@@ -460,7 +492,7 @@ handle @nouveau {
     reverse_proxy 22.22.22.142:8080
 }
 EOF
-caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+caddy validate --config /etc/caddy/Caddyfile && systemctl restart caddy
 
 # 5. Ajouter le nom dans BunkerWeb (RB-01), tester
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: nouveau.example.com' \
