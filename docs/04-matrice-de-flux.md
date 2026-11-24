@@ -59,6 +59,10 @@ Chaque destination est nominative. Pas de `22.22.22.0/24` en bloc.
 **Hors Caddyfile** : `watch` et `automaton` ne sont plus routés par Caddy. Ils
 restent des exceptions héritées, décrites plus bas.
 
+**Exception applicative** : CT126 (`support`) doit appeler CT108:3001 (FreeLLM)
+pour l'IA du ticketing. C'est un `ACCEPT` nominatif dans `REFONTE`, sans passer
+par le WAF : le flux est interne, authentifié par clé API côté app.
+
 ## Les exceptions hors WAF
 
 Tout le web public ne passe pas par le WAF. C'est écrit, pas caché.

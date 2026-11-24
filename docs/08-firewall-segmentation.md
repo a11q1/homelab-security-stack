@@ -166,6 +166,11 @@ rebranchés dans le Caddyfile pour cette raison. Tout nouveau vhost qui pointe
 directement d'un CT DMZ vers un autre CT DMZ doit être ajouté à la main, sinon
 il tombera en timeout.
 
+Une seule exception applicative est assumée : **CT126 (`support`) →
+CT108:3001 (FreeLLM)** pour l'IA du ticketing. C'est un `ACCEPT` nominatif dans
+`REFONTE`, avec la clé API côté application. Sans lui, l'IA du support échoue
+silencieusement.
+
 ## Le cas des `.fw` par conteneur
 
 CT155 et CT156 ont `firewall=1` et un fichier `.fw` avec `policy_in: DROP`.
