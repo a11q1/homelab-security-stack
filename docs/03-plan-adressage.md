@@ -140,6 +140,19 @@ Proxmox, pas par l'invité.
 Pas d'enregistrement DNS ne doit pointer vers une IP RFC1918 : Cloudflare
 refuserait de proxifier, et le nom fuiterait le plan d'adressage interne.
 
+## Tags Proxmox
+
+Les 35 LXC + la VM sont tagués pour le tri dans l'UI, sans effet fonctionnel :
+
+| Dimension | Tags |
+|---|---|
+| Environnement | `prod`, `dev`, `lab`, `stopped` |
+| Zone | `z-lan`, `z-core`, `z-svc`, `z-lab`, `z-dmz`, `z-edge` |
+| Exposition | `public`, `admin`, `internal` |
+| Rôle | `web`, `db`, `api`, `ai`, `game`, `media`, `monitoring`, `security`, `tunnel`, `bot`, `client`, `school`, `tools`, `pki`, `waf` |
+
+Exemple : `pct set 147 --tags "prod;sitecreator;web;clients;public;z-dmz"`.
+
 ## Ce qui reste à faire
 
 | Sujet | État | Pourquoi c'est important |
